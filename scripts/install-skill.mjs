@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const source = join(root, "skills", "codex-kimi");
+const source = join(root, "skill");
 const destinations = [
   join(process.env.CODEX_HOME || join(homedir(), ".codex"), "skills", "codex-kimi"),
   join(process.env.AGENTS_HOME || join(homedir(), ".agents"), "skills", "codex-kimi"),

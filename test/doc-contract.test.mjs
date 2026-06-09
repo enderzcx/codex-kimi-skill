@@ -4,6 +4,9 @@ import test from "node:test";
 
 test("README documents Kimi runtime, rollback, image, and raw result handling", () => {
   const readme = readFileSync("README.md", "utf8");
+  const readmeEn = readFileSync("README.en.md", "utf8");
+  assert.match(readme, /English/);
+  assert.match(readme, /目录结构/);
   assert.match(readme, /kimi-k2\.6:cloud/);
   assert.match(readme, /codex-mimo/);
   assert.match(readme, /kci result <job-id>/);
@@ -13,10 +16,12 @@ test("README documents Kimi runtime, rollback, image, and raw result handling", 
   assert.match(readme, /--image/);
   assert.match(readme, /image_payload_sent: true/);
   assert.match(readme, /image_delivery_confirmed: true/);
+  assert.match(readmeEn, /Kimi K2\.6/);
+  assert.match(readmeEn, /ReadMediaFile/);
 });
 
 test("skill documents Kimi result handling discipline", () => {
-  const skill = readFileSync("skills/codex-kimi/SKILL.md", "utf8");
+  const skill = readFileSync("skill/SKILL.md", "utf8");
   assert.match(skill, /Result Handling/);
   assert.match(skill, /kci result <job-id>/);
   assert.match(skill, /kci result --json <job-id>/);
@@ -31,9 +36,9 @@ test("skill documents Kimi result handling discipline", () => {
 });
 
 test("split skill docs keep runtime, result, and prompt concerns separate", () => {
-  const runtime = readFileSync("skills/codex-kimi/runtime.md", "utf8");
-  const results = readFileSync("skills/codex-kimi/result-handling.md", "utf8");
-  const prompts = readFileSync("skills/codex-kimi/prompt-templates.md", "utf8");
+  const runtime = readFileSync("skill/runtime.md", "utf8");
+  const results = readFileSync("skill/result-handling.md", "utf8");
+  const prompts = readFileSync("skill/prompt-templates.md", "utf8");
   assert.match(runtime, /kci delegate/);
   assert.match(runtime, /kci code/);
   assert.match(runtime, /No service is started/);
