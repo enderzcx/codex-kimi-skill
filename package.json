@@ -1,0 +1,29 @@
+{
+  "name": "codex-kimi-skill",
+  "version": "0.1.0",
+  "description": "Codex skill and CLI for delegating copy, UI/UX, and frontend first-pass work to Kimi K2.6 through Ollama.",
+  "type": "module",
+  "bin": {
+    "codex-kimi": "./bin/codex-kimi.mjs",
+    "kci": "./bin/codex-kimi.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "smoke": "node ./bin/codex-kimi.mjs delegate --mode copywrite --dry-run --json \"写一个中文空状态\"",
+    "health": "node ./bin/codex-kimi.mjs health --json",
+    "install:skill": "node ./scripts/install-skill.mjs"
+  },
+  "keywords": [
+    "codex",
+    "kimi",
+    "ollama",
+    "skill",
+    "ui-ux",
+    "copywriting",
+    "frontend"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
