@@ -1,28 +1,24 @@
 # codex-kimi-skill
 
-Chinese is the primary README: [README.md](README.md)
+[中文说明](README.md)
 
-`codex-kimi-skill` is a local Codex skill and CLI that routes former routine MiMo work to Kimi K2.6 Cloud: copywriting, Chinese UI wording, UX briefs, visual briefs, human feedback, screenshot review, and G2 internal frontend first-pass candidates.
+`codex-kimi-skill` is a Codex skill and CLI for routing copywriting, Chinese UI wording, UX briefs, visual briefs, screenshot review, and related tasks to Kimi K2.6 Cloud.
 
-This is v0.1 for Sunny's local workflow, not a public release. `codex-mimo` remains installed as the rollback path.
+It provides two commands:
 
-## Scope
+```bash
+kci
+codex-kimi
+```
 
-Owned by Kimi:
+## Features
 
-- `copywrite`, `rewrite-cn`, `naming`, `human-feedback`
-- `layout-director`, `frontend-ux-plan`, `frontend-first-pass`
-- `visual-brief`, `ui-review-cn`
-- text context through `--input`
-- screenshot/image review through Kimi Code `ReadMediaFile` via `kci code --image`
-- JSON extraction plus `raw-fallback`
-
-Not owned:
-
-- Reasonix / DeepSeek v4 Pro engineering final review
-- autonomous production UI delivery
-- payment, permissions, credentials, customer data, or other G3 flows
-- deleting MiMo or making replacement irreversible
+- Copywriting, naming, and Chinese wording polish
+- UI copy, information hierarchy, UX briefs, and visual briefs
+- Text file context through `--input`
+- Screenshot review through `kci code --image`, using Kimi Code `ReadMediaFile`
+- Background jobs with `status`, `result`, and `cancel`
+- `--json` output, JSON extraction, and `raw-fallback`
 
 ## Repository Layout
 
@@ -30,14 +26,14 @@ Not owned:
 .
 ├── bin/                  # kci / codex-kimi CLI entry
 ├── scripts/              # install scripts
-├── skill/                # source Codex skill, installed as ~/.codex/skills/codex-kimi
+├── skill/                # Codex skill source
 ├── src/                  # CLI and Kimi/Ollama runtime
 ├── test/                 # node:test contract tests
 ├── README.md             # Chinese entry
 └── README.en.md          # English entry
 ```
 
-The repository uses `skill/` for a cleaner GitHub layout. Installation still writes the standard skill directories:
+The repository uses `skill/` for a cleaner GitHub layout. Installation writes the standard skill paths:
 
 ```text
 ~/.codex/skills/codex-kimi
@@ -51,7 +47,7 @@ npm link
 npm run install:skill
 ```
 
-Available commands:
+Check the commands:
 
 ```bash
 kci --help
@@ -67,11 +63,11 @@ kci health --json
 kci health --json --vision-smoke
 ```
 
-Copy / UX / naming:
+Copy and UX:
 
 ```bash
 kci delegate --mode copywrite --json "只回复一句中文短 CTA"
-kci delegate --mode frontend-ux-plan --json "给一个内部 dashboard 的信息层级建议"
+kci delegate --mode frontend-ux-plan --json "给一个 dashboard 的信息层级建议"
 ```
 
 Repo-aware context:
@@ -80,16 +76,16 @@ Repo-aware context:
 kci code --mode frontend-ux-plan --json --input package.json "结合仓库上下文给 UX plan"
 ```
 
-Screenshot review through Kimi Code + ReadMediaFile:
+Screenshot review:
 
 ```bash
-kci code --mode ui-review-cn --json --image /tmp/red.png "识别主色，只返回 RED"
+kci code --mode ui-review-cn --json --image /tmp/screenshot.png "基于截图审核中文 UI"
 ```
 
 Background jobs:
 
 ```bash
-kci delegate --mode frontend-first-pass --background --json "内部 dashboard 首版"
+kci delegate --mode frontend-first-pass --background --json "生成 dashboard 首版建议"
 kci status <job-id>
 kci result <job-id>
 kci result --json <job-id>
@@ -100,30 +96,41 @@ kci cancel <job-id>
 
 - Default base URL: `http://localhost:11434/v1`
 - Default model: `kimi-k2.6:cloud`
-- API key: local Ollama accepts a placeholder; the CLI reads `KIMI_API_KEY`, `OLLAMA_API_KEY`, `ollamaApiKey`, or `ollama`
-- No fallback model is selected automatically; missing `kimi-k2.6:cloud` is a health failure
-- `kci code` uses Kimi Code CLI prompt mode; images are read through `ReadMediaFile`
-- v0.1 is Sunny-local: Kimi Code binary/config checks prefer `/Users/sunny/.kimi-code`
+- API key: the CLI reads `KIMI_API_KEY`, `OLLAMA_API_KEY`, `ollamaApiKey`, or `ollama`
+- `kci delegate` calls Ollama OpenAI-compatible chat completions
+- `kci code` uses Kimi Code CLI prompt mode
+- `kci code --image` asks Kimi Code to read image paths with `ReadMediaFile`
+
+`kci health --json` checks:
+
+- Kimi Code CLI
+- Ollama OpenAI-compatible `/models`
+- `kimi-k2.6:cloud` model presence
+- `ollama show kimi-k2.6:cloud` capabilities
+- Kimi text smoke
+
+`--vision-smoke` also creates a temporary red PNG and asks Kimi Code to read it. A successful result includes `vision_smoke.image_delivery_route` and `vision_smoke.image_delivery_confirmed`.
 
 ## Result Handling
 
-With `--json`, `kci` tries direct JSON parsing, fenced JSON extraction, balanced JSON extraction, then `raw-fallback`.
+With `--json`, `kci` tries:
 
-`raw-fallback` keeps model output in `deliverables[0].content`; background jobs also retain `raw`. Do not summarize a model result until the actual `kci result` output has been read.
+1. Direct JSON parse
+2. Fenced JSON extraction
+3. Balanced JSON object extraction
+4. `raw-fallback`
 
-## Image Truthfulness
+`raw-fallback` keeps model output in `deliverables[0].content`. Background jobs also retain `raw`, available through `kci result --json <job-id>`.
 
-`kci code --image` passes image paths into Kimi Code prompt mode and instructs Kimi Code to call `ReadMediaFile`.
+## Image Handling
 
-A successful image route should include:
+`kci code --image` passes image paths into Kimi Code prompt mode and instructs Kimi Code to call `ReadMediaFile`. A successful result includes:
 
 - `image_payload_sent: true`
 - `image_delivery_route: "kimi-code-read-media-file"`
 - `image_delivery_confirmed: true`
 
-`image_delivery_confirmed: true` is route-level confirmation only. Real UI review still requires the response to match visible screenshot content.
-
-`kci delegate --image` remains only a direct Ollama OpenAI-compatible diagnostic route, not the v0.1 screenshot-review acceptance path.
+These fields confirm the image delivery route. For visual review, still check that the response matches the visible screenshot content.
 
 ## Verification
 
@@ -131,6 +138,5 @@ A successful image route should include:
 npm test
 kci health --json
 kci health --json --vision-smoke
-python3 /Users/sunny/.agents/skills/sunny-meta-skill/scripts/check_sunny_skill.py /Users/sunny/Work/CODEX/deepseek/codex-kimi-skill/skill
 git diff --check
 ```

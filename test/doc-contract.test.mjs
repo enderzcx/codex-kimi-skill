@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("README documents Kimi runtime, rollback, image, and raw result handling", () => {
+test("README documents Kimi runtime, image, and raw result handling", () => {
   const readme = readFileSync("README.md", "utf8");
   const readmeEn = readFileSync("README.en.md", "utf8");
   assert.match(readme, /English/);
   assert.match(readme, /目录结构/);
   assert.match(readme, /kimi-k2\.6:cloud/);
-  assert.match(readme, /codex-mimo/);
   assert.match(readme, /kci result <job-id>/);
   assert.match(readme, /kci result --json <job-id>/);
   assert.match(readme, /kci code/);
@@ -18,6 +17,32 @@ test("README documents Kimi runtime, rollback, image, and raw result handling", 
   assert.match(readme, /image_delivery_confirmed: true/);
   assert.match(readmeEn, /Kimi K2\.6/);
   assert.match(readmeEn, /ReadMediaFile/);
+});
+
+test("public README files do not expose internal collaboration rules", () => {
+  const combined = `${readFileSync("README.md", "utf8")}\n${readFileSync("README.en.md", "utf8")}`;
+  const forbidden = [
+    /Sunny/i,
+    /MiMo/i,
+    /Reasonix/i,
+    /DeepSeek/i,
+    /\bG2\b/,
+    /\bG3\b/,
+    /rollback/i,
+    /\/Users\/sunny/,
+    /sunny-meta-skill/i,
+    /check_sunny_skill/i,
+    /客户数据/,
+    /支付/,
+    /权限/,
+    /凭据/,
+    /内部/,
+    /本地习惯/,
+    /验收边界/,
+  ];
+  for (const pattern of forbidden) {
+    assert.doesNotMatch(combined, pattern);
+  }
 });
 
 test("skill documents Kimi result handling discipline", () => {

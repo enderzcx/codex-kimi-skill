@@ -1,28 +1,24 @@
 # codex-kimi-skill
 
-中文说明为主。English entry: [README.en.md](README.en.md)
+[English README](README.en.md)
 
-`codex-kimi-skill` 是一个本地 Codex skill + CLI，用来把原来常规交给 MiMo 的文案、中文 UI、UX brief、visual brief、人味反馈、内部前端 first-pass 任务转交给 Kimi K2.6 Cloud。
+`codex-kimi-skill` 是一个 Codex skill + CLI，用于把文案、中文 UI、UX brief、visual brief、截图 review 等任务交给 Kimi K2.6 Cloud。
 
-它不是公开发布版；当前是 Sunny 本机工作流的 v0.1。`codex-mimo` 不会被删除，MiMo 只保留为 rollback。
+它提供两个命令：
 
-## 能做什么
+```bash
+kci
+codex-kimi
+```
 
-默认交给 Kimi：
+## 功能
 
-- `copywrite`、`rewrite-cn`、`naming`、`human-feedback`
-- `layout-director`、`frontend-ux-plan`、`frontend-first-pass`
-- `visual-brief`、`ui-review-cn`
-- 通过 `--input` 附加文本文件
-- 通过 Kimi Code `ReadMediaFile` 做截图 / 图片 review：`kci code --image`
-- JSON 提取和 `raw-fallback` 兜底
-
-不负责：
-
-- Reasonix / DeepSeek v4 Pro 的工程 final review
-- 生产 UI 自主交付
-- 支付、权限、凭据、客户数据等 G3 流程
-- 删除 MiMo 或全局不可回滚替换
+- 文案、命名、中文表达润色
+- UI 文案、信息层级、UX brief、visual brief
+- 通过 `--input` 附加文本文件上下文
+- 通过 `kci code --image` 调用 Kimi Code，并使用 `ReadMediaFile` 读取截图
+- 后台任务：`status`、`result`、`cancel`
+- `--json` 输出、JSON 提取和 `raw-fallback`
 
 ## 目录结构
 
@@ -30,14 +26,14 @@
 .
 ├── bin/                  # kci / codex-kimi CLI 入口
 ├── scripts/              # 安装脚本
-├── skill/                # Codex skill 源文件，安装时复制成 ~/.codex/skills/codex-kimi
+├── skill/                # Codex skill 源文件
 ├── src/                  # CLI 和 Kimi/Ollama runtime
 ├── test/                 # node:test 契约测试
 ├── README.md             # 中文入口
 └── README.en.md          # 英文入口
 ```
 
-仓库里使用 `skill/` 是为了 GitHub 展示更清晰；安装后仍然是标准 skill 路径：
+仓库里使用 `skill/` 保持 GitHub 展示简洁。安装后会写入标准 skill 路径：
 
 ```text
 ~/.codex/skills/codex-kimi
@@ -51,7 +47,7 @@ npm link
 npm run install:skill
 ```
 
-安装后可用两个命令：
+确认命令可用：
 
 ```bash
 kci --help
@@ -67,11 +63,11 @@ kci health --json
 kci health --json --vision-smoke
 ```
 
-文案 / UX / 命名：
+文案和 UX：
 
 ```bash
 kci delegate --mode copywrite --json "只回复一句中文短 CTA"
-kci delegate --mode frontend-ux-plan --json "给一个内部 dashboard 的信息层级建议"
+kci delegate --mode frontend-ux-plan --json "给一个 dashboard 的信息层级建议"
 ```
 
 带文件上下文：
@@ -80,16 +76,16 @@ kci delegate --mode frontend-ux-plan --json "给一个内部 dashboard 的信息
 kci code --mode frontend-ux-plan --json --input package.json "结合仓库上下文给 UX plan"
 ```
 
-截图 review，走 Kimi Code + ReadMediaFile：
+截图 review：
 
 ```bash
-kci code --mode ui-review-cn --json --image /tmp/red.png "识别主色，只返回 RED"
+kci code --mode ui-review-cn --json --image /tmp/screenshot.png "基于截图审核中文 UI"
 ```
 
 后台任务：
 
 ```bash
-kci delegate --mode frontend-first-pass --background --json "内部 dashboard 首版"
+kci delegate --mode frontend-first-pass --background --json "生成 dashboard 首版建议"
 kci status <job-id>
 kci result <job-id>
 kci result --json <job-id>
@@ -100,20 +96,20 @@ kci cancel <job-id>
 
 - 默认 base URL：`http://localhost:11434/v1`
 - 默认模型：`kimi-k2.6:cloud`
-- API key：本地 Ollama 接受 placeholder；CLI 会读取 `KIMI_API_KEY`、`OLLAMA_API_KEY`、`ollamaApiKey` 或 `ollama`
-- 不会自动选 fallback model；缺少 `kimi-k2.6:cloud` 会被视为 health failure
-- `kci code` 使用 Kimi Code CLI prompt mode；图片通过 `ReadMediaFile` 读取
-- v0.1 是 Sunny-local wrapper：Kimi Code binary/config 检查会优先看 `/Users/sunny/.kimi-code`
+- API key：CLI 会读取 `KIMI_API_KEY`、`OLLAMA_API_KEY`、`ollamaApiKey` 或 `ollama`
+- `kci delegate` 调用 Ollama OpenAI-compatible chat completions
+- `kci code` 使用 Kimi Code CLI prompt mode
+- `kci code --image` 会要求 Kimi Code 使用 `ReadMediaFile` 读取图片路径
 
 `kci health --json` 会检查：
 
-- Kimi CLI 版本
+- Kimi Code CLI
 - Ollama OpenAI-compatible `/models`
 - `kimi-k2.6:cloud` 是否存在
 - `ollama show kimi-k2.6:cloud` capabilities
 - Kimi 文本 smoke
 
-`--vision-smoke` 会额外生成一张 `/tmp` 下的红色 PNG，并要求 Kimi Code 用 `ReadMediaFile` 读取。只有返回 `vision_smoke.image_delivery_route` 和 `vision_smoke.image_delivery_confirmed`，才算图片传递路线通过。模型声明有 `vision` capability 不等于图片 review 通过。
+`--vision-smoke` 会额外生成一张临时红色 PNG，并要求 Kimi Code 读取它。成功结果会包含 `vision_smoke.image_delivery_route` 和 `vision_smoke.image_delivery_confirmed`。
 
 ## 结果处理
 
@@ -124,9 +120,9 @@ kci cancel <job-id>
 3. balanced JSON object extraction
 4. `raw-fallback`
 
-`raw-fallback` 会把模型原文放进 `deliverables[0].content`，后台 job 也会保留 `raw`。读到实际 `kci result` 前，不要总结模型结果。
+`raw-fallback` 会把模型原文放进 `deliverables[0].content`。后台任务也会保留 `raw`，可通过 `kci result --json <job-id>` 查看。
 
-## 图片真实性规则
+## 图片处理
 
 `kci code --image` 会把图片路径交给 Kimi Code prompt mode，并要求 Kimi Code 调用 `ReadMediaFile`。成功结果会带：
 
@@ -134,9 +130,7 @@ kci cancel <job-id>
 - `image_delivery_route: "kimi-code-read-media-file"`
 - `image_delivery_confirmed: true`
 
-`image_delivery_confirmed: true` 只是路线级确认，不代表 Kimi 一定分析了所有视觉细节。真正 UI review 还必须看输出是否和截图可见内容一致。
-
-`kci delegate --image` 只保留为直连 Ollama OpenAI-compatible 的诊断路线，不作为 v0.1 截图 review 验收路径。
+这些字段表示图片传递路线成功。做视觉 review 时，仍应确认输出是否和截图可见内容一致。
 
 ## 验证
 
@@ -144,6 +138,5 @@ kci cancel <job-id>
 npm test
 kci health --json
 kci health --json --vision-smoke
-python3 /Users/sunny/.agents/skills/sunny-meta-skill/scripts/check_sunny_skill.py /Users/sunny/Work/CODEX/deepseek/codex-kimi-skill/skill
 git diff --check
 ```
