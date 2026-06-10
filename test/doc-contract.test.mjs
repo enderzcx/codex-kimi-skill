@@ -11,6 +11,9 @@ test("README documents Kimi runtime, image, and raw result handling", () => {
   assert.match(readme, /kci result <job-id>/);
   assert.match(readme, /kci result --json <job-id>/);
   assert.match(readme, /kci code/);
+  assert.match(readme, /--skills-dir/);
+  assert.match(readme, /stream-json/);
+  assert.match(readme, /kimi provider list --json/);
   assert.match(readme, /raw-fallback/);
   assert.match(readme, /--image/);
   assert.match(readme, /image_payload_sent: true/);
@@ -66,6 +69,9 @@ test("split skill docs keep runtime, result, and prompt concerns separate", () =
   const prompts = readFileSync("skill/prompt-templates.md", "utf8");
   assert.match(runtime, /kci delegate/);
   assert.match(runtime, /kci code/);
+  assert.match(runtime, /--skills-dir/);
+  assert.match(runtime, /stream-json/);
+  assert.match(runtime, /kimi provider list --json/);
   assert.match(runtime, /No service is started/);
   assert.match(results, /source-of-truth/);
   assert.match(results, /raw-fallback/);

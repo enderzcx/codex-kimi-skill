@@ -100,8 +100,17 @@ kci cancel <job-id>
 - `kci delegate` 调用 Ollama OpenAI-compatible chat completions
 - `kci code` 使用 Kimi Code CLI prompt mode
 - `kci code --image` 会要求 Kimi Code 使用 `ReadMediaFile` 读取图片路径
+- `kci code --skills-dir <path>` 会把目录传给 Kimi Code；该参数可重复，相对路径按 `--cwd` 解析
+- `kci code --output-format stream-json --json` 会解析 Kimi Code JSONL 事件，并在结果里记录 assistant/tool 计数
 - 长文档请求使用 `--json` 时，CLI 仍输出稳定 JSON；但为了减少空输出，底层模型请求会自动放宽 provider 级 JSON 约束。需要强制 provider JSON 时可加 `--strict-json`
 - 长文档响应默认 token budget 会提高；也可以用 `--max-tokens <n>` 手动指定
+
+Kimi Code provider 检查：
+
+```bash
+kimi doctor
+kimi provider list --json
+```
 
 `kci health --json` 会检查：
 

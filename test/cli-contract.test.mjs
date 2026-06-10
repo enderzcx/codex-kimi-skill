@@ -527,6 +527,93 @@ test("code dry-run exposes Kimi Code routing without sending image bytes", () =>
   assert.equal(JSON.stringify(payload).includes("base64"), false);
 });
 
+test("code dry-run exposes repeatable Kimi Code skills directories", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "kci-code-skills-dry-run-"));
+  const output = run(process.execPath, [
+    BIN,
+    "code",
+    "--json",
+    "--dry-run",
+    "--cwd",
+    cwd,
+    "--skills-dir",
+    "./skill",
+    "--skills-dir",
+    "/tmp/kimi-extra-skill",
+    "plan with skills",
+  ], { cwd, encoding: "utf8" });
+  const payload = JSON.parse(output);
+
+  assert.deepEqual(payload.routing.skills_dirs, [
+    resolve(cwd, "skill"),
+    "/tmp/kimi-extra-skill",
+  ]);
+});
+
+test("code --json parses Kimi Code stream-json assistant and tool metadata", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "kci-code-stream-json-"));
+  const fakeKimi = join(cwd, "fake-kimi.mjs");
+  writeFileSync(fakeKimi, `#!/usr/bin/env node
+console.log("{bad json");
+console.log(JSON.stringify({
+  type: "assistant",
+  message: {
+    role: "assistant",
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        summary: "stream ok",
+        deliverables: [{ type: "note", title: "parsed", content: "ok" }],
+        notes: [],
+        next_for_codex: []
+      })
+    }]
+  },
+  tool_calls: [{ name: "ReadMediaFile", arguments: { path: "screenshot.png" } }]
+}));
+console.log(JSON.stringify({ type: "tool", name: "ReadMediaFile", content: "read ok" }));
+`, { mode: 0o755 });
+
+  const output = run(process.execPath, [
+    BIN,
+    "code",
+    "--json",
+    "--output-format",
+    "stream-json",
+    "--kimi-bin",
+    fakeKimi,
+    "--skills-dir",
+    "./skill",
+    "parse stream",
+  ], { cwd, encoding: "utf8" });
+  const payload = JSON.parse(output);
+
+  assert.equal(payload.summary, "stream ok");
+  assert.equal(payload.parse_status, "parsed");
+  assert.equal(payload.routing.kimi_code_output.stream_json, true);
+  assert.equal(payload.routing.kimi_code_output.event_count, 2);
+  assert.equal(payload.routing.kimi_code_output.parse_error_count, 1);
+  assert.equal(payload.routing.kimi_code_output.assistant_message_count, 1);
+  assert.equal(payload.routing.kimi_code_output.tool_call_count, 1);
+  assert.equal(payload.routing.kimi_code_output.tool_result_count, 1);
+  assert.deepEqual(payload.routing.kimi_code_output.tool_names, ["ReadMediaFile"]);
+  assert.match(payload.routing.kimi_command, new RegExp(`--skills-dir ${payload.routing.skills_dirs[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+});
+
+test("code rejects invalid Kimi Code output format", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "kci-code-invalid-output-format-"));
+  const result = spawnSync(process.execPath, [
+    BIN,
+    "code",
+    "--output-format",
+    "json",
+    "invalid format",
+  ], { cwd, encoding: "utf8" });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--output-format must be text or stream-json, got "json"/);
+});
+
 test("code --json emits structured failure while keeping non-zero exit", () => {
   const cwd = mkdtempSync(join(tmpdir(), "kci-code-json-failure-"));
   const fakeKimi = join(cwd, "fake-kimi.sh");

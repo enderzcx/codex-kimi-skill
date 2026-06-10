@@ -56,6 +56,8 @@ export async function code(argv) {
   const mode = normalizeMode(opts.mode);
   const files = opts.inputFiles.map(readInputFile);
   const images = opts.imageFiles.map(readImageFile);
+  const cwd = resolve(opts.cwd);
+  const skillsDirs = opts.skillsDirs.map((dir) => resolve(cwd, dir));
   const system = buildSystemPrompt(mode, opts.json);
   const prompt = buildUserPrompt({ task, contexts: opts.contexts, files, images, imageHandling: "kimi-code-read-media" });
   const kimiPrompt = [
@@ -72,10 +74,12 @@ export async function code(argv) {
     mode,
     provider: "kimi-code",
     selected_model: opts.model ?? "(kimi default)",
+    kimi_code_output_format: opts.outputFormat,
+    skills_dirs: skillsDirs,
     output_kind: mode === "frontend-first-pass" ? "code-brief" : mode.includes("review") ? "review" : "brief",
     allow_code: mode === "frontend-first-pass",
     handoff_to: "codex",
-    cwd: resolve(opts.cwd),
+    cwd,
     input_files: files.map((file) => ({ path: file.path, bytes: file.bytes, truncated: file.truncated })),
     images: images.map(publicImageMetadata),
     image_read_requested: images.length > 0,
@@ -93,8 +97,9 @@ export async function code(argv) {
   try {
     result = await runKimiCode({
       bin: opts.kimiBin,
-      cwd: opts.cwd,
+      cwd,
       model: opts.model,
+      skillsDirs,
       prompt: kimiPrompt,
       outputFormat: opts.outputFormat,
       timeoutMs: opts.timeoutMs,
@@ -114,10 +119,12 @@ export async function code(argv) {
     }
     throw error;
   }
-  const wrapped = wrapJsonOutput(result.stdout, mode, {
+  const output = normalizeKimiCodeOutput(result.stdout, opts.outputFormat);
+  const wrapped = wrapJsonOutput(output.text, mode, {
     ...routing,
     image_payload_sent: images.length > 0,
-    image_delivery_confirmed: images.length > 0 && !/\[IMAGE_NOT_READ(?::[^\]]+)?\]/.test(result.stdout),
+    image_delivery_confirmed: images.length > 0 && !/\[IMAGE_NOT_READ(?::[^\]]+)?\]/.test(output.raw),
+    kimi_code_output: output.metadata,
     kimi_command: result.command,
   });
   if (opts.json) writeJson(wrapped);
@@ -241,10 +248,11 @@ async function runDelegateRequest({ opts, task, mode, config, routing, files, im
   };
 }
 
-async function runKimiCode({ bin, cwd, model, prompt, outputFormat, timeoutMs = 180000 }) {
+async function runKimiCode({ bin, cwd, model, skillsDirs = [], prompt, outputFormat, timeoutMs = 180000 }) {
   const kimiBin = bin ?? process.env.KIMI_CLI_BIN ?? "/Users/sunny/.kimi-code/bin/kimi";
   const args = [
     ...(model ? ["--model", model] : []),
+    ...skillsDirs.flatMap((dir) => ["--skills-dir", dir]),
     "--output-format",
     outputFormat,
     "-p",
@@ -260,6 +268,116 @@ async function runKimiCode({ bin, cwd, model, prompt, outputFormat, timeoutMs = 
   } catch (error) {
     throw new Error(`Kimi Code run failed: ${messageOf(error)}`);
   }
+}
+
+export function normalizeKimiCodeOutput(raw, outputFormat = "text") {
+  const text = String(raw ?? "").trim();
+  if (outputFormat !== "stream-json") {
+    return {
+      raw: text,
+      text,
+      metadata: {
+        format: outputFormat,
+        stream_json: false,
+      },
+    };
+  }
+
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const events = [];
+  const parseErrors = [];
+  const assistantMessages = [];
+  const toolCalls = [];
+  const toolResults = [];
+
+  for (const [index, line] of lines.entries()) {
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch (error) {
+      parseErrors.push({ line: index + 1, error: messageOf(error) });
+      continue;
+    }
+    if (!event || typeof event !== "object" || Array.isArray(event)) continue;
+    events.push(event);
+
+    const role = String(event.role ?? event.message?.role ?? event.data?.role ?? "").toLowerCase();
+    const type = String(event.type ?? event.event ?? event.kind ?? "").toLowerCase();
+    const assistantText = collectTextParts(event);
+    if (assistantText && (role === "assistant" || type.includes("assistant") || event.message?.role === "assistant")) {
+      assistantMessages.push(assistantText);
+    }
+
+    const calls = event.tool_calls ?? event.message?.tool_calls ?? event.data?.tool_calls ?? event.tool_call;
+    if (calls) toolCalls.push(...(Array.isArray(calls) ? calls : [calls]));
+    if (type.includes("tool_call") && !calls) toolCalls.push(event);
+
+    if (role === "tool" || type === "tool" || type.includes("tool_result")) {
+      toolResults.push({
+        name: event.name ?? event.tool_name ?? event.message?.name ?? null,
+        content: collectTextParts(event) || stringifyCompact(event.result ?? event.content ?? event.data),
+      });
+    }
+  }
+
+  const assistantText = assistantMessages.join("\n").trim();
+  return {
+    raw: text,
+    text: assistantText || text,
+    metadata: {
+      format: outputFormat,
+      stream_json: true,
+      event_count: events.length,
+      assistant_message_count: assistantMessages.length,
+      tool_call_count: toolCalls.length,
+      tool_result_count: toolResults.length,
+      parse_error_count: parseErrors.length,
+      tool_names: uniqueNames([...toolCalls, ...toolResults]),
+    },
+  };
+}
+
+function collectTextParts(value) {
+  const seen = new Set();
+  const pieces = [];
+  const visit = (node) => {
+    if (node == null) return;
+    if (typeof node === "string") {
+      pieces.push(node);
+      return;
+    }
+    if (typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      if (seen.has(node)) return;
+      seen.add(node);
+      for (const item of node) visit(item);
+      return;
+    }
+    if (typeof node.text === "string") pieces.push(node.text);
+    if (typeof node.content === "string") pieces.push(node.content);
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (node.content && typeof node.content === "object") visit(node.content);
+    if (node.message && typeof node.message === "object") visit(node.message);
+    if (node.delta && typeof node.delta === "object") visit(node.delta);
+    if (node.data && typeof node.data === "object") visit(node.data);
+  };
+  visit(value);
+  return pieces.join("").trim();
+}
+
+function stringifyCompact(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function uniqueNames(items) {
+  return [...new Set(items.map((item) => item?.name ?? item?.function?.name ?? item?.tool_name).filter(Boolean))];
 }
 
 function enqueueBackgroundDelegate({ opts, task, mode, config, routing, files, images = [] }) {
@@ -618,6 +736,7 @@ export function parseCodeArgs(argv) {
     kimiBin: undefined,
     outputFormat: "text",
     timeoutMs: 180000,
+    skillsDirs: [],
     task: "",
   };
   const positional = [];
@@ -632,12 +751,16 @@ export function parseCodeArgs(argv) {
     else if (arg === "--cwd" || arg === "--cd") opts.cwd = requireValue(argv, ++i, arg);
     else if (arg === "--model" || arg === "-m") opts.model = requireValue(argv, ++i, arg);
     else if (arg === "--kimi-bin") opts.kimiBin = requireValue(argv, ++i, "--kimi-bin");
+    else if (arg === "--skills-dir") opts.skillsDirs.push(requireValue(argv, ++i, "--skills-dir"));
     else if (arg === "--output-format") opts.outputFormat = requireValue(argv, ++i, "--output-format");
     else if (arg === "--timeout-ms") opts.timeoutMs = parseTimeoutMs(requireValue(argv, ++i, "--timeout-ms"));
     else if (arg === "--help" || arg === "-h") {
       printCodeHelp();
       process.exit(0);
     } else positional.push(arg);
+  }
+  if (!["text", "stream-json"].includes(opts.outputFormat)) {
+    throw new Error(`--output-format must be text or stream-json, got "${opts.outputFormat}"`);
   }
   opts.task = positional.join(" ").trim();
   return opts;
@@ -1175,6 +1298,7 @@ Options:
   --cwd, --cd <path>      Working directory for Kimi Code. Default: cwd.
   -m, --model <id>        Override Kimi Code model alias.
   --kimi-bin <path>       Override Kimi Code binary.
+  --skills-dir <path>     Load Kimi Code skills from this directory; repeatable.
   --output-format <fmt>   Kimi Code output format: text or stream-json. Default: text.
   --timeout-ms <ms>       Abort a stuck Kimi Code request. Default: 180000.
   --dry-run               Print routing metadata without calling Kimi Code.

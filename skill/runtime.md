@@ -12,9 +12,22 @@ Kimi Code prompt-mode route:
 
 ```bash
 kci code --mode frontend-ux-plan --json --input package.json "结合仓库上下文给 UX plan"
+kci code --mode frontend-ux-plan --json --skills-dir ./skill "结合项目 Kimi skill 给 UX plan"
 ```
 
 This route uses Kimi Code CLI with text/file prompt context. Kimi Code prompt mode requires a configured login/default model; when `--json` is used, failures are returned as structured JSON.
+
+`--skills-dir <dir>` is passed through to Kimi Code and can be repeated. Relative paths resolve against `--cwd`; `routing.skills_dirs` records the resolved paths.
+
+Use `--output-format stream-json --json` when a run may involve Kimi Code tool calls. `kci` parses Kimi Code JSONL events before wrapping the result and records assistant message, tool call, tool result, and parse-error counts under `routing.kimi_code_output`. Without `--json`, raw Kimi Code output is printed unchanged.
+
+Provider setup and checks:
+
+```bash
+kimi doctor
+kimi provider list --json
+kimi provider add <registry-url> --api-key <key>
+```
 
 For images, `kci code --image` passes the image paths to Kimi Code and instructs it to call `ReadMediaFile`. This is the v0.1 screenshot-review route. The direct Ollama OpenAI-compatible image payload route used by `kci delegate --image` is diagnostic only.
 

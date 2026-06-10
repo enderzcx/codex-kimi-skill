@@ -100,8 +100,17 @@ kci cancel <job-id>
 - `kci delegate` calls Ollama OpenAI-compatible chat completions
 - `kci code` uses Kimi Code CLI prompt mode
 - `kci code --image` asks Kimi Code to read image paths with `ReadMediaFile`
+- `kci code --skills-dir <path>` passes a skill directory to Kimi Code; repeat the flag to load multiple directories. Relative paths resolve against `--cwd`
+- `kci code --output-format stream-json --json` parses Kimi Code JSONL events and records assistant/tool counts in the result
 - For long-document requests with `--json`, the CLI still emits stable JSON, but the provider-level JSON constraint is relaxed automatically to reduce empty outputs. Use `--strict-json` to force provider JSON mode
 - Long-document requests get a larger default response token budget; use `--max-tokens <n>` to override it
+
+Kimi Code provider checks:
+
+```bash
+kimi doctor
+kimi provider list --json
+```
 
 `kci health --json` checks:
 
