@@ -90,6 +90,15 @@ kci result --json <job-id>
 kci cancel <job-id>
 ```
 
+Long documents:
+
+```bash
+kci delegate --mode rewrite-cn --json --input ./page.html \
+  "把面向用户的表达改得更自然"
+```
+
+For large prompts, `--json` means stable CLI JSON output, not strict provider JSON. The CLI automatically relaxes provider-level JSON mode for long files and preserves raw Markdown in `deliverables[0].content`. Small non-strict JSON requests retry once as Markdown if the first provider JSON response is empty. Large relaxed requests or `--strict-json` requests preserve empty output as `parse_status: empty` so Codex can shrink the excerpt, switch to `kci code --input`, or rerun with clearer scope.
+
 ## Result Handling
 
 - Read actual command output before summarizing.

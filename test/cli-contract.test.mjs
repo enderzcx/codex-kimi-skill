@@ -59,19 +59,24 @@ test("background delegate returns a job id without calling Kimi synchronously", 
     "copywrite",
     "--background",
     "--json",
+    "--strict-json",
+    "--max-tokens",
+    "9000",
     "slow copy",
   ], { cwd, encoding: "utf8" });
   const elapsed = Date.now() - started;
   const payload = JSON.parse(output);
-
   assert.equal(payload.status, "queued");
   assert.match(payload.job_id, /^kimi-/);
   assert.equal(payload.commands.result.startsWith("kci result"), true);
+  assert.equal(payload.strict_json, true);
+  assert.equal(payload.max_tokens, 9000);
   assert.ok(elapsed < 1000, `background command waited ${elapsed}ms`);
 });
 
 test("job-worker transitions a queued delegate job to completed", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "kci-worker-complete-"));
+  let capturedBody;
   const server = await startOpenAiCompatServer({
     content: JSON.stringify({
       summary: "worker done",
@@ -79,12 +84,17 @@ test("job-worker transitions a queued delegate job to completed", async () => {
       notes: [],
       next_for_codex: [],
     }),
+    onRequest: (body) => {
+      capturedBody = body;
+    },
   });
   try {
     createJob(cwd, workerJob({
       id: "worker-complete",
       baseUrl: server.baseUrl,
       apiKey: "test",
+      strictJson: true,
+      maxTokens: 7777,
     }));
 
     const result = await execFileAsync(process.execPath, [BIN, "job-worker", "--cwd", cwd, "--job-id", "worker-complete"], {
@@ -98,6 +108,8 @@ test("job-worker transitions a queued delegate job to completed", async () => {
     assert.equal(stored.phase, "done");
     assert.equal(stored.result.summary, "worker done");
     assert.equal(stored.raw.includes("worker done"), true);
+    assert.deepEqual(capturedBody.response_format, { type: "json_object" });
+    assert.equal(capturedBody.max_tokens, 7777);
   } finally {
     await server.close();
   }
@@ -180,7 +192,7 @@ test("delegate dry-run accepts image attachments without exposing base64", () =>
   assert.equal(JSON.stringify(payload).includes("base64"), false);
 });
 
-function workerJob({ id, baseUrl, apiKey = "test", timeoutMs = 5000 }) {
+function workerJob({ id, baseUrl, apiKey = "test", timeoutMs = 5000, strictJson = false, maxTokens = undefined }) {
   return {
     id,
     kind: "delegate",
@@ -201,6 +213,8 @@ function workerJob({ id, baseUrl, apiKey = "test", timeoutMs = 5000 }) {
         mode: "copywrite",
         contexts: [],
         json: true,
+        strictJson,
+        maxTokens,
         model: "test-model",
         baseUrl,
         timeoutMs,
@@ -225,18 +239,27 @@ function workerJob({ id, baseUrl, apiKey = "test", timeoutMs = 5000 }) {
   };
 }
 
-function startOpenAiCompatServer({ content }) {
+function startOpenAiCompatServer({ content, onRequest }) {
   const server = http.createServer((request, response) => {
     if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
       response.writeHead(404, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "not found" }));
       return;
     }
-    request.resume();
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({
-      choices: [{ message: { content } }],
-    }));
+    let raw = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      raw += chunk;
+    });
+    request.on("end", () => {
+      const body = raw ? JSON.parse(raw) : {};
+      onRequest?.(body);
+      const selectedContent = typeof content === "function" ? content(body) : content;
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({
+        choices: [{ message: { content: selectedContent } }],
+      }));
+    });
   });
   return new Promise((resolveServer) => {
     server.listen(0, "127.0.0.1", () => {
@@ -279,6 +302,200 @@ test("delegate --json emits structured failure while keeping non-zero exit", () 
   assert.equal(payload.routing.provider, "kimi");
   assert.equal(payload.routing.image_payload_sent, true);
   assert.equal(payload.routing.image_delivery_confirmed, false);
+});
+
+test("delegate --json relaxes provider JSON mode for long input while preserving CLI JSON", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "kci-long-json-relaxed-"));
+  const longFile = join(cwd, "long.html");
+  writeFileSync(longFile, `<html>${"长文案".repeat(12000)}</html>`);
+  let capturedBody;
+  const server = await startOpenAiCompatServer({
+    content: "这是长文档改写建议。",
+    onRequest: (body) => {
+      capturedBody = body;
+    },
+  });
+  try {
+    const { stdout: output } = await execFileAsync(process.execPath, [
+      BIN,
+      "delegate",
+      "--mode",
+      "rewrite-cn",
+      "--json",
+      "--input",
+      longFile,
+      "--base-url",
+      server.baseUrl,
+      "改得更像真人说话",
+    ], { cwd, encoding: "utf8" });
+    const payload = JSON.parse(output);
+
+    assert.equal(payload.parse_status, "raw-fallback");
+    assert.equal(payload.routing.provider_json_requested, true);
+    assert.equal(payload.routing.provider_json_used, false);
+    assert.equal(payload.routing.provider_json_mode, "relaxed-for-large-request");
+    assert.equal(payload.routing.request_profile.large_request, true);
+    assert.equal(payload.routing.request_profile.truncated_input_files.length, 0);
+    assert.equal(payload.deliverables[0].content, "这是长文档改写建议。");
+    assert.equal(capturedBody.response_format, undefined);
+    assert.equal(capturedBody.max_tokens, 8192);
+  } finally {
+    await server.close();
+  }
+});
+
+test("delegate --strict-json forces provider JSON mode for long input", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "kci-long-strict-json-"));
+  const longFile = join(cwd, "long.html");
+  writeFileSync(longFile, `<html>${"长文案".repeat(12000)}</html>`);
+  let capturedBody;
+  const server = await startOpenAiCompatServer({
+    content: JSON.stringify({
+      summary: "strict done",
+      deliverables: [{ type: "note", title: "ok", content: "ok" }],
+      notes: [],
+      next_for_codex: [],
+    }),
+    onRequest: (body) => {
+      capturedBody = body;
+    },
+  });
+  try {
+    const { stdout: output } = await execFileAsync(process.execPath, [
+      BIN,
+      "delegate",
+      "--mode",
+      "rewrite-cn",
+      "--json",
+      "--strict-json",
+      "--input",
+      longFile,
+      "--base-url",
+      server.baseUrl,
+      "改得更像真人说话",
+    ], { cwd, encoding: "utf8" });
+    const payload = JSON.parse(output);
+
+    assert.equal(payload.summary, "strict done");
+    assert.equal(payload.routing.provider_json_used, true);
+    assert.equal(payload.routing.provider_json_mode, "strict");
+    assert.deepEqual(capturedBody.response_format, { type: "json_object" });
+  } finally {
+    await server.close();
+  }
+});
+
+test("delegate --strict-json preserves empty output as empty instead of retrying", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "kci-strict-empty-"));
+  let calls = 0;
+  const server = await startOpenAiCompatServer({
+    content: () => {
+      calls += 1;
+      return "";
+    },
+  });
+  try {
+    const { stdout: output } = await execFileAsync(process.execPath, [
+      BIN,
+      "delegate",
+      "--mode",
+      "rewrite-cn",
+      "--json",
+      "--strict-json",
+      "--base-url",
+      server.baseUrl,
+      "把这句话改得自然一点",
+    ], { cwd, encoding: "utf8" });
+    const payload = JSON.parse(output);
+
+    assert.equal(calls, 1);
+    assert.equal(payload.parse_status, "empty");
+    assert.equal(payload.routing.provider_json_mode, "strict");
+    assert.equal(payload.deliverables[0].content, "");
+  } finally {
+    await server.close();
+  }
+});
+
+test("delegate retries empty strict JSON output as markdown", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "kci-empty-retry-"));
+  let calls = 0;
+  const server = await startOpenAiCompatServer({
+    content: () => {
+      calls += 1;
+      return calls === 1 ? "" : "重试后返回的 Markdown。";
+    },
+  });
+  try {
+    const { stdout: output } = await execFileAsync(process.execPath, [
+      BIN,
+      "delegate",
+      "--mode",
+      "rewrite-cn",
+      "--json",
+      "--base-url",
+      server.baseUrl,
+      "把这句话改得自然一点",
+    ], { cwd, encoding: "utf8" });
+    const payload = JSON.parse(output);
+
+    assert.equal(calls, 2);
+    assert.equal(payload.parse_status, "raw-fallback");
+    assert.equal(payload.routing.empty_output_retry, true);
+    assert.equal(payload.routing.provider_json_mode, "empty-output-retry-markdown");
+    assert.equal(payload.deliverables[0].content, "重试后返回的 Markdown。");
+  } finally {
+    await server.close();
+  }
+});
+
+test("delegate truncates oversized UTF-8 input without replacement characters", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "kci-utf8-truncate-"));
+  const longFile = join(cwd, "long.html");
+  writeFileSync(longFile, `<html>${"开头😀".repeat(30000)}中间${"结尾🚀".repeat(30000)}</html>`);
+  let capturedBody;
+  const server = await startOpenAiCompatServer({
+    content: "ok",
+    onRequest: (body) => {
+      capturedBody = body;
+    },
+  });
+  try {
+    const { stdout: output } = await execFileAsync(process.execPath, [
+      BIN,
+      "delegate",
+      "--mode",
+      "rewrite-cn",
+      "--json",
+      "--input",
+      longFile,
+      "--base-url",
+      server.baseUrl,
+      "改写",
+    ], { cwd, encoding: "utf8" });
+    const payload = JSON.parse(output);
+    const userContent = capturedBody.messages.at(-1).content;
+
+    assert.equal(payload.routing.input_files[0].truncated, true);
+    assert.deepEqual(payload.routing.request_profile.truncated_input_files, [longFile]);
+    assert.match(userContent, /\[TRUNCATED: middle omitted by kci/);
+    assert.doesNotMatch(userContent, /\uFFFD/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("delegate rejects invalid max token values", () => {
+  const result = spawnSync(process.execPath, [
+    BIN,
+    "delegate",
+    "--max-tokens",
+    "0",
+    "bad tokens",
+  ], { encoding: "utf8" });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--max-tokens must be a positive integer/);
 });
 
 test("code dry-run exposes Kimi Code routing without sending image bytes", () => {

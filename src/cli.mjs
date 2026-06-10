@@ -25,8 +25,10 @@ import {
 } from "./state.mjs";
 
 const execFileAsync = promisify(execFile);
-const INPUT_FILE_BYTE_CAP = 48 * 1024;
+const INPUT_FILE_BYTE_CAP = positiveEnvNumber("KCI_INPUT_FILE_BYTE_CAP", 256 * 1024, { min: 16 * 1024 });
 const IMAGE_FILE_BYTE_CAP = 8 * 1024 * 1024;
+const STRICT_JSON_PROMPT_BYTE_CAP = positiveEnvNumber("KCI_STRICT_JSON_PROMPT_BYTE_CAP", 32 * 1024, { min: 4 * 1024 });
+const LONG_REQUEST_MAX_TOKENS = positiveEnvNumber("KCI_LONG_REQUEST_MAX_TOKENS", 8192, { min: 1024 });
 
 export async function main(argv) {
   const [command, ...rest] = argv;
@@ -176,8 +178,18 @@ export async function delegate(argv) {
 }
 
 async function runDelegateRequest({ opts, task, mode, config, routing, files, images = [] }) {
-  const system = buildSystemPrompt(mode, opts.json);
+  const initialSystem = buildSystemPrompt(mode, opts.json);
   const prompt = buildUserPrompt({ task, contexts: opts.contexts, files, images });
+  const profile = requestProfile({ system: initialSystem, prompt, files, task });
+  const providerJson = shouldUseStrictProviderJson({ opts, profile });
+  const system = providerJson ? initialSystem : buildSystemPrompt(mode, false);
+  const requestRouting = {
+    ...routing,
+    request_profile: profile,
+    provider_json_requested: Boolean(opts.json),
+    provider_json_used: providerJson,
+    provider_json_mode: opts.json ? (providerJson ? "strict" : "relaxed-for-large-request") : "off",
+  };
   const result = await runKimi({
     model: config.model,
     baseUrl: config.baseUrl,
@@ -185,19 +197,47 @@ async function runDelegateRequest({ opts, task, mode, config, routing, files, im
     system,
     prompt,
     images,
-    json: opts.json,
+    json: providerJson,
+    maxTokens: opts.maxTokens ?? (profile.large_request ? LONG_REQUEST_MAX_TOKENS : undefined),
     timeoutMs: opts.timeoutMs,
   });
-  const wrapped = wrapJsonOutput(result.stdout, mode, {
-    ...routing,
+  let raw = result.stdout;
+  let finalRouting = {
+    ...requestRouting,
     image_payload_sent: result.imagePayloadSent,
     image_delivery_confirmed: result.imagePayloadSent,
     response_model: result.model,
-  });
+  };
+  if (!String(raw ?? "").trim() && providerJson && !opts.strictJson) {
+    const retrySystem = [
+      buildSystemPrompt(mode, false),
+      "Retry note: the previous strict JSON response was empty. Return concise Markdown instead of JSON.",
+    ].join("\n\n");
+    const retry = await runKimi({
+      model: config.model,
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      system: retrySystem,
+      prompt,
+      images,
+      json: false,
+      maxTokens: opts.maxTokens ?? (profile.large_request ? LONG_REQUEST_MAX_TOKENS : undefined),
+      timeoutMs: opts.timeoutMs,
+    });
+    raw = retry.stdout;
+    finalRouting = {
+      ...finalRouting,
+      provider_json_used: false,
+      provider_json_mode: "empty-output-retry-markdown",
+      empty_output_retry: true,
+      response_model: retry.model,
+    };
+  }
+  const wrapped = wrapJsonOutput(raw, mode, finalRouting);
   return {
-    raw: result.stdout,
+    raw,
     wrapped,
-    rendered: renderDelegateResult(wrapped, { raw: result.stdout }),
+    rendered: renderDelegateResult(wrapped, { raw }),
   };
 }
 
@@ -243,6 +283,8 @@ function enqueueBackgroundDelegate({ opts, task, mode, config, routing, files, i
         mode: opts.mode,
         contexts: opts.contexts,
         json: true,
+        strictJson: opts.strictJson,
+        maxTokens: opts.maxTokens,
         model: opts.model,
         baseUrl: opts.baseUrl,
         timeoutMs: opts.timeoutMs ?? 0,
@@ -270,6 +312,8 @@ function enqueueBackgroundDelegate({ opts, task, mode, config, routing, files, i
     status: "queued",
     mode,
     selected_model: routing.selected_model,
+    strict_json: Boolean(opts.strictJson),
+    max_tokens: opts.maxTokens ?? null,
     commands: {
       status: `kci status ${jobId}`,
       result: `kci result ${jobId}`,
@@ -530,6 +574,8 @@ export function parseDelegateArgs(argv) {
     json: false,
     dryRun: false,
     background: false,
+    strictJson: false,
+    maxTokens: undefined,
     model: undefined,
     baseUrl: undefined,
     timeoutMs: undefined,
@@ -543,10 +589,12 @@ export function parseDelegateArgs(argv) {
     else if (arg === "--image") opts.imageFiles.push(requireValue(argv, ++i, "--image"));
     else if (arg === "--context") opts.contexts.push(requireValue(argv, ++i, "--context"));
     else if (arg === "--json") opts.json = true;
+    else if (arg === "--strict-json") opts.strictJson = true;
     else if (arg === "--dry-run") opts.dryRun = true;
     else if (arg === "--background") opts.background = true;
     else if (arg === "--model" || arg === "-m") opts.model = requireValue(argv, ++i, arg);
     else if (arg === "--base-url") opts.baseUrl = requireValue(argv, ++i, "--base-url");
+    else if (arg === "--max-tokens") opts.maxTokens = parsePositiveInteger(requireValue(argv, ++i, "--max-tokens"), "--max-tokens");
     else if (arg === "--timeout-ms") opts.timeoutMs = parseTimeoutMs(requireValue(argv, ++i, "--timeout-ms"));
     else if (arg === "--help" || arg === "-h") {
       printDelegateHelp();
@@ -748,6 +796,20 @@ function parseTimeoutMs(value) {
   return parsed;
 }
 
+function positiveEnvNumber(name, fallback, { min = 1 } = {}) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(min, Math.floor(parsed));
+}
+
+function parsePositiveInteger(value, flag) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${flag} must be a positive integer`);
+  return parsed;
+}
+
 function parseSimpleArgs(argv, valueOptions = [], booleanOptions = []) {
   const valueSet = new Set(valueOptions.map((name) => `--${name}`));
   const boolSet = new Set(booleanOptions.map((name) => `--${name}`));
@@ -764,13 +826,50 @@ function parseSimpleArgs(argv, valueOptions = [], booleanOptions = []) {
 function readInputFile(path) {
   const content = readFileSync(path, "utf8");
   const truncated = Buffer.byteLength(content, "utf8") > INPUT_FILE_BYTE_CAP;
-  const sliced = truncated ? Buffer.from(content).subarray(0, INPUT_FILE_BYTE_CAP).toString("utf8") : content;
+  const sliced = truncated ? sliceMiddleByBytes(content, INPUT_FILE_BYTE_CAP) : content;
   return {
     path,
     content: sliced,
     bytes: Buffer.byteLength(content, "utf8"),
     truncated,
   };
+}
+
+function sliceMiddleByBytes(content, byteCap) {
+  const buffer = Buffer.from(content);
+  if (buffer.byteLength <= byteCap) return content;
+  const marker = "\n\n[TRUNCATED: middle omitted by kci; kept file head and tail for long-document context]\n\n";
+  const markerBytes = Buffer.byteLength(marker);
+  const budget = Math.max(0, byteCap - markerBytes);
+  const headBytes = Math.floor(budget * 0.7);
+  const tailBytes = budget - headBytes;
+  return `${takeHeadByBytes(content, headBytes)}${marker}${takeTailByBytes(content, tailBytes)}`;
+}
+
+function takeHeadByBytes(content, byteLimit) {
+  let used = 0;
+  let result = "";
+  for (const char of content) {
+    const bytes = Buffer.byteLength(char, "utf8");
+    if (used + bytes > byteLimit) break;
+    result += char;
+    used += bytes;
+  }
+  return result;
+}
+
+function takeTailByBytes(content, byteLimit) {
+  let used = 0;
+  const chars = [];
+  const all = Array.from(content);
+  for (let index = all.length - 1; index >= 0; index -= 1) {
+    const char = all[index];
+    const bytes = Buffer.byteLength(char, "utf8");
+    if (used + bytes > byteLimit) break;
+    chars.push(char);
+    used += bytes;
+  }
+  return chars.reverse().join("");
 }
 
 function readImageFile(path) {
@@ -844,6 +943,29 @@ export function routeMetadata({ mode, config, inputFiles = [], images = [] }) {
   };
 }
 
+export function requestProfile({ system = "", prompt = "", files = [], task = "" }) {
+  const promptBytes = Buffer.byteLength(String(prompt), "utf8");
+  const systemBytes = Buffer.byteLength(String(system), "utf8");
+  const taskBytes = Buffer.byteLength(String(task), "utf8");
+  const inputBytes = files.reduce((sum, file) => sum + Number(file.bytes ?? 0), 0);
+  const truncatedInputFiles = files.filter((file) => file.truncated).map((file) => file.path);
+  return {
+    prompt_bytes: promptBytes,
+    system_bytes: systemBytes,
+    task_bytes: taskBytes,
+    input_bytes: inputBytes,
+    input_file_count: files.length,
+    truncated_input_files: truncatedInputFiles,
+    large_request: promptBytes + systemBytes > STRICT_JSON_PROMPT_BYTE_CAP || truncatedInputFiles.length > 0,
+  };
+}
+
+function shouldUseStrictProviderJson({ opts, profile }) {
+  if (!opts.json) return false;
+  if (opts.strictJson) return true;
+  return !profile.large_request;
+}
+
 export function wrapJsonOutput(raw, mode, routing) {
   const extracted = extractJsonObject(raw);
   if (extracted?.parsed) {
@@ -864,11 +986,15 @@ export function wrapJsonOutput(raw, mode, routing) {
   return {
     mode,
     routing,
-    parse_status: "raw-fallback",
+    parse_status: String(raw ?? "").trim() ? "raw-fallback" : "empty",
     parse_source: "raw",
-    summary: "Kimi returned non-JSON content.",
+    summary: String(raw ?? "").trim() ? "Kimi returned non-JSON content." : "Kimi returned empty content.",
     deliverables: [{ type: "note", title: "raw", content: String(raw ?? "").trim() }],
-    notes: ["The CLI wrapped the raw response because JSON parsing failed."],
+    notes: [
+      String(raw ?? "").trim()
+        ? "The CLI wrapped the raw response because JSON parsing failed."
+        : "The CLI received an empty response. Run `kci health --json`, try a smaller excerpt, or use `kci code --input` for repo-aware long context.",
+    ],
     next_for_codex: [],
   };
 }
@@ -1026,9 +1152,11 @@ Options:
   --image <path>       Attach a screenshot/image as OpenAI-compatible image content; repeatable.
   --context <text>     Add short context; repeatable.
   --json               Ask for and emit stable JSON, or raw fallback if Kimi does not comply.
+  --strict-json        Force provider-level JSON mode even for large prompts.
   --background         Run as a tracked background job. Use for long UI/copy tasks.
   -m, --model <id>     Override model. Default: kimi-k2.6:cloud.
   --base-url <url>     Override OpenAI-compatible base URL. Default: http://localhost:11434/v1.
+  --max-tokens <n>     Override response token budget. Long requests default to ${LONG_REQUEST_MAX_TOKENS}.
   --timeout-ms <ms>    Abort a stuck request after this many ms. Default: 180000.
   --dry-run            Print routing metadata without calling Kimi.
 `);

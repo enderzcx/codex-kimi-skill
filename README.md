@@ -100,6 +100,8 @@ kci cancel <job-id>
 - `kci delegate` 调用 Ollama OpenAI-compatible chat completions
 - `kci code` 使用 Kimi Code CLI prompt mode
 - `kci code --image` 会要求 Kimi Code 使用 `ReadMediaFile` 读取图片路径
+- 长文档请求使用 `--json` 时，CLI 仍输出稳定 JSON；但为了减少空输出，底层模型请求会自动放宽 provider 级 JSON 约束。需要强制 provider JSON 时可加 `--strict-json`
+- 长文档响应默认 token budget 会提高；也可以用 `--max-tokens <n>` 手动指定
 
 `kci health --json` 会检查：
 
@@ -121,6 +123,15 @@ kci cancel <job-id>
 4. `raw-fallback`
 
 `raw-fallback` 会把模型原文放进 `deliverables[0].content`。后台任务也会保留 `raw`，可通过 `kci result --json <job-id>` 查看。
+
+长文档或长 HTML 建议：
+
+```bash
+kci delegate --mode rewrite-cn --json --input ./page.html "把面向用户的表达改得更自然"
+kci delegate --mode rewrite-cn --background --json --input ./page.html "长文档改写建议"
+```
+
+这类请求默认会避免强制模型返回 JSON，但命令本身仍会输出 JSON wrapper，方便后续 agent 读取。
 
 ## 图片处理
 

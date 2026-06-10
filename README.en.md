@@ -100,6 +100,8 @@ kci cancel <job-id>
 - `kci delegate` calls Ollama OpenAI-compatible chat completions
 - `kci code` uses Kimi Code CLI prompt mode
 - `kci code --image` asks Kimi Code to read image paths with `ReadMediaFile`
+- For long-document requests with `--json`, the CLI still emits stable JSON, but the provider-level JSON constraint is relaxed automatically to reduce empty outputs. Use `--strict-json` to force provider JSON mode
+- Long-document requests get a larger default response token budget; use `--max-tokens <n>` to override it
 
 `kci health --json` checks:
 
@@ -121,6 +123,15 @@ With `--json`, `kci` tries:
 4. `raw-fallback`
 
 `raw-fallback` keeps model output in `deliverables[0].content`. Background jobs also retain `raw`, available through `kci result --json <job-id>`.
+
+For long documents or HTML:
+
+```bash
+kci delegate --mode rewrite-cn --json --input ./page.html "把面向用户的表达改得更自然"
+kci delegate --mode rewrite-cn --background --json --input ./page.html "长文档改写建议"
+```
+
+For these requests, `kci` avoids forcing the model to return JSON while still emitting a JSON wrapper for downstream agents.
 
 ## Image Handling
 

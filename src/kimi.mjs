@@ -19,6 +19,7 @@ export async function runKimi({
   prompt,
   images = [],
   json = false,
+  maxTokens,
   timeoutMs = resolveTimeoutMs(),
 }) {
   const config = resolveKimiConfig({ model, baseUrl });
@@ -42,7 +43,7 @@ export async function runKimi({
     ],
     temperature: 0.3,
     stream: false,
-    max_tokens: json ? 4096 : 2048,
+    max_tokens: maxTokens ?? (json ? 4096 : 2048),
     ...(json ? { response_format: { type: "json_object" } } : {}),
   };
 

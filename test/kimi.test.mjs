@@ -40,6 +40,7 @@ test("runs Kimi through Ollama OpenAI-compatible chat completions", async () => 
         dataUrl: "data:image/png;base64,iVBORw0KGgo=",
       }],
       json: true,
+      maxTokens: 123,
     });
 
     assert.equal(result.stdout, "{\"summary\":\"ok\"}");
@@ -48,6 +49,7 @@ test("runs Kimi through Ollama OpenAI-compatible chat completions", async () => 
     assert.equal(captured.init.headers.Authorization, "Bearer test-key");
     assert.equal(captured.body.model, "kimi-k2.6:cloud");
     assert.deepEqual(captured.body.response_format, { type: "json_object" });
+    assert.equal(captured.body.max_tokens, 123);
     assert.equal(captured.body.messages[1].content[0].type, "text");
     assert.equal(captured.body.messages[1].content[1].type, "image_url");
     assert.equal(captured.body.messages[1].content[1].image_url, "data:image/png;base64,iVBORw0KGgo=");

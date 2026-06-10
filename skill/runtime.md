@@ -52,3 +52,13 @@ kci cancel <job-id>
 ```
 
 No service is started by `kci delegate`; it calls the local Ollama OpenAI-compatible API directly.
+
+Long document / HTML behavior:
+
+- `--input` keeps larger files up to the runtime cap and preserves both head and tail when truncation is unavoidable.
+- `kci delegate --json` still returns stable CLI JSON, but large prompts automatically relax provider-level `response_format: json_object`; this avoids the empty-output failure mode seen with long HTML + complex rewrite tasks.
+- Use `--strict-json` only when the provider itself must return JSON.
+- Use `--max-tokens <n>` when a long rewrite or first-pass task needs more output budget.
+- If strict provider JSON is not forced and provider-level JSON was still used for a small request, an empty first response is retried once as Markdown and wrapped with `parse_status: raw-fallback`.
+- Large requests already run in relaxed provider mode; if they return empty content, `kci` reports `parse_status: empty` so Codex can shrink the excerpt or use `kci code --input`.
+- If `--strict-json` is set and the provider returns empty content, `kci` preserves that as `parse_status: empty` instead of silently changing modes.

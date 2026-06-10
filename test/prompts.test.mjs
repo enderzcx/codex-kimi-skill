@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildSystemPrompt, buildUserPrompt, normalizeMode } from "../src/prompts.mjs";
-import { parseDelegateArgs, parseOllamaCapabilities, routeMetadata, wrapJsonOutput } from "../src/cli.mjs";
+import { parseDelegateArgs, parseOllamaCapabilities, requestProfile, routeMetadata, wrapJsonOutput } from "../src/cli.mjs";
 
 test("normalizes mode aliases", () => {
   assert.equal(normalizeMode("copywriting"), "copywrite");
@@ -115,11 +115,38 @@ test("extracts custom fenced JSON from Kimi Code transcript output", () => {
 });
 
 test("parses background and timeout delegate controls", () => {
-  const opts = parseDelegateArgs(["--background", "--timeout-ms", "0", "--mode", "frontend-first-pass", "build UI"]);
+  const opts = parseDelegateArgs(["--background", "--timeout-ms", "0", "--max-tokens", "9000", "--strict-json", "--mode", "frontend-first-pass", "build UI"]);
   assert.equal(opts.background, true);
   assert.equal(opts.timeoutMs, 0);
+  assert.equal(opts.maxTokens, 9000);
+  assert.equal(opts.strictJson, true);
   assert.equal(opts.mode, "frontend-first-pass");
   assert.equal(opts.task, "build UI");
+});
+
+test("requestProfile marks long prompts as large requests", () => {
+  const profile = requestProfile({
+    system: "system",
+    prompt: "x".repeat(40 * 1024),
+    files: [{ path: "long.html", bytes: 40 * 1024, truncated: false }],
+    task: "rewrite",
+  });
+
+  assert.equal(profile.large_request, true);
+  assert.equal(profile.input_file_count, 1);
+  assert.deepEqual(profile.truncated_input_files, []);
+});
+
+test("requestProfile marks truncated inputs as large requests", () => {
+  const profile = requestProfile({
+    system: "system",
+    prompt: "short",
+    files: [{ path: "huge.html", bytes: 300 * 1024, truncated: true }],
+    task: "rewrite",
+  });
+
+  assert.equal(profile.large_request, true);
+  assert.deepEqual(profile.truncated_input_files, ["huge.html"]);
 });
 
 test("parses Ollama show capabilities", () => {
